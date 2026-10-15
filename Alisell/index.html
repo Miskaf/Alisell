@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alisell — Shop Global. Deliver Local.</title>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+</head>
+<body>
+
+<!-- Everything inside #app is real HTML and shows even if JavaScript fails.
+     If app.js runs successfully it may replace this content with its own views. -->
+<div id="app">
+
+  <div class="top">
+    <div class="container">
+      <span>Free delivery on your first order</span>
+      <span>Sell on Alisell · Help · Track order</span>
+    </div>
+  </div>
+
+  <header class="header">
+    <div class="container header-main">
+      <a class="logo" href="index.html"><span class="logo-mark"></span>Alisell</a>
+      <form class="search-wrap" action="index.html" method="get" role="search">
+        <div class="search">
+          <select name="category" aria-label="Category">
+            <option value="">All</option>
+            <option>Fashion</option>
+            <option>Electronics</option>
+            <option>Home</option>
+            <option>Beauty</option>
+          </select>
+          <input type="search" name="q" placeholder="Search products, brands and categories" aria-label="Search">
+          <button type="submit" aria-label="Search">&#128269;</button>
+        </div>
+      </form>
+      <div class="head-actions">
+        <a href="index.html?page=login">Sign in</a>
+        <a href="index.html?page=cart">&#128722; Cart</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <div class="container nav-row">
+      <a href="index.html?page=shop">Shop</a>
+      <a href="index.html?page=hotels">Hotels</a>
+      <a href="index.html?page=properties">Properties</a>
+      <a href="index.html?page=orders">My orders</a>
+      <a href="index.html?page=sell">Become a seller</a>
+      <a href="index.html?page=agent">Deliver</a>
+      <a href="index.html?page=verify">Verify identity</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-grid">
+        <aside class="side-cats">
+          <h3>Categories</h3>
+          <a href="index.html?page=shop&category=fashion">Fashion <span>&rsaquo;</span></a>
+          <a href="index.html?page=shop&category=electronics">Electronics <span>&rsaquo;</span></a>
+          <a href="index.html?page=shop&category=home">Home &amp; Living <span>&rsaquo;</span></a>
+          <a href="index.html?page=shop&category=beauty">Beauty <span>&rsaquo;</span></a>
+          <a href="index.html?page=shop&category=groceries">Groceries <span>&rsaquo;</span></a>
+        </aside>
+
+        <div class="banner">
+          <h1>Shop global. Deliver local.</h1>
+          <p>Buy from sellers around the world and get your order delivered to your door by trusted local agents.</p>
+          <a class="btn" href="index.html?page=shop">Start shopping</a>
+        </div>
+
+        <div class="promo-stack">
+          <div class="promo-card orange">
+            <h3>Sell on Alisell</h3>
+            <p>Verify your identity and list your first product.</p>
+            <a class="btn alt" href="index.html?page=sell">Become a seller</a>
+          </div>
+          <div class="promo-card">
+            <h3>Deliver and earn</h3>
+            <p>Pick up paid orders near you as a delivery agent.</p>
+            <a class="btn" href="index.html?page=agent">Join as agent</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head"><h2>Browse categories</h2></div>
+        <div class="cat-grid">
+          <a class="cat" href="index.html?page=shop&category=fashion"><span class="emoji">&#128087;</span>Fashion</a>
+          <a class="cat" href="index.html?page=shop&category=electronics"><span class="emoji">&#128241;</span>Electronics</a>
+          <a class="cat" href="index.html?page=shop&category=home"><span class="emoji">&#128715;</span>Home</a>
+          <a class="cat" href="index.html?page=shop&category=beauty"><span class="emoji">&#128132;</span>Beauty</a>
+          <a class="cat" href="index.html?page=shop&category=groceries"><span class="emoji">&#129365;</span>Groceries</a>
+          <a class="cat" href="index.html?page=hotels"><span class="emoji">&#127976;</span>Hotels</a>
+          <a class="cat" href="index.html?page=properties"><span class="emoji">&#127969;</span>Properties</a>
+          <a class="cat" href="index.html?page=shop&category=baby"><span class="emoji">&#129528;</span>Baby</a>
+          <a class="cat" href="index.html?page=shop&category=sports"><span class="emoji">&#9917;</span>Sports</a>
+          <a class="cat" href="index.html?page=shop&category=books"><span class="emoji">&#128218;</span>Books</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>Latest products</h2>
+          <a class="muted" href="index.html?page=shop">See all</a>
+        </div>
+        <!-- Filled from Firestore by the small script at the bottom of this page -->
+        <div class="product-grid" id="product-grid">
+          <p class="muted" id="product-status">Loading products&hellip;</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="container">
+      <div class="trust">
+        <div><span>&#128274;</span><span><b>Secure payments</b>Paid through Paystack</span></div>
+        <div><span>&#128666;</span><span><b>Local delivery</b>Verified delivery agents</span></div>
+        <div><span>&#9989;</span><span><b>Verified sellers</b>Identity-checked listings</span></div>
+        <div><span>&#11088;</span><span><b>Ratings</b>Real reviews from buyers</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div>
+        <a class="logo" href="index.html" style="color:#fff"><span class="logo-mark"></span>Alisell</a>
+        <p>Shop global. Deliver local.</p>
+      </div>
+      <div><h4>Shop</h4><a href="index.html?page=shop">All products</a><a href="index.html?page=orders">My orders</a></div>
+      <div><h4>Earn</h4><a href="index.html?page=sell">Sell on Alisell</a><a href="index.html?page=agent">Become a delivery agent</a></div>
+      <div><h4>Explore</h4><a href="index.html?page=hotels">Hotels</a><a href="index.html?page=properties">Properties</a></div>
+    </div>
+  </footer>
+</div>
+
+<noscript>
+  <p style="text-align:center;padding:16px">Sign-in, cart and checkout need JavaScript. Browsing the pages above works without it.</p>
+</noscript>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module" src="assets/firebase-config.js"></script>
+<script type="module" src="assets/firebase-data.js"></script>
+<script type="module" src="assets/firebase-functions.js"></script>
+<script type="module" src="assets/firebase-storage.js"></script>
+<script type="module" src="assets/app.js"></script>
+
+<!-- defer makes app.js run after the Firebase modules above, in document order -->
+<script src="assets/app.js" defer></script>
+
+<!-- Fills the static product grid with real products. Adjust field names to match your Firestore documents. -->
+<script>
+(function () {
+  var grid = document.getElementById("product-grid");
+  var status = document.getElementById("product-status");
+  if (!grid) return;
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function render(list) {
+    if (!list.length) { status.textContent = "No products yet. Check back soon."; return; }
+    grid.innerHTML = list.slice(0, 10).map(function (p) {
+      var img = p.image || p.image_url || (p.images && p.images[0]) || "";
+      var name = p.name || p.title || "Product";
+      var price = p.price != null ? "&#8358;" + Number(p.price).toLocaleString() : "";
+      return '<a class="product" href="index.html?page=product&id=' + encodeURIComponent(p.id) + '">' +
+        (img ? '<img class="product-img" loading="lazy" alt="' + esc(name) + '" src="' + esc(img) + '">' : '<div class="product-img"></div>') +
+        '<div class="product-body"><div>' + esc(name) + '</div><div class="price">' + price + '</div>' +
+        '<div class="rating">&#9733; ' + (p.rating ? Number(p.rating).toFixed(1) : "New") + '</div></div></a>';
+    }).join("");
+  }
+  function load() {
+    window.firebaseData.getProducts().then(render).catch(function (e) {
+      status.textContent = (e && e.message) || "Could not load products.";
+    });
+  }
+  if (window.firebaseData) load();
+  else {
+    window.addEventListener("firebase-data-ready", load, { once: true });
+    setTimeout(function () { if (!window.firebaseData && status.isConnected) status.textContent = "Products could not load. Check your connection and refresh."; }, 10000);
+  }
+})();
+</script>
+</body>
+</html>

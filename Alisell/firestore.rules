@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function hasRole(r) { return signedIn() && ('roles' in me()) && r in me().roles; }
+    function verified() { return signedIn() && me().get('verified', false) == true; }
+    function isAdmin() { return hasRole('admin'); }
+    function protectedKeys() { return ['roles', 'verified', 'ratingSum', 'ratingCount']; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid && !request.resource.data.keys().hasAny(protectedKeys());
+      allow update: if signedIn() && request.auth.uid == uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedKeys());
+    }
+    match /products/{id} {
+      allow read: if true;
+      allow create: if hasRole('seller') && verified() && request.resource.data.sellerUid == request.auth.uid;
+      allow update, delete: if signedIn() && (resource.data.sellerUid == request.auth.uid || isAdmin());
+    }
+    match /hotels/{id} {
+      allow read: if true;
+      allow create: if hasRole('host') && verified() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+    match /properties/{id} {
+      allow read: if true;
+      allow create: if verified() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+    match /propertyLeads/{id} {
+      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid;
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.customerUid == request.auth.uid || isAdmin());
+    }
+    match /orders/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || resource.data.deliveryAgentUid == request.auth.uid
+        || (hasRole('agent') && resource.data.deliveryAgentUid == null && resource.data.payment_status == 'paid') || isAdmin());
+      allow write: if false;
+    }
+    match /bookings/{id} {
+      allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || resource.data.hotelOwnerUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+    match /reviews/{id} { allow read: if true; allow write: if false; }
+    match /verificationRequests/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+  }
+}

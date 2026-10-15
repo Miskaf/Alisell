@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Alisell Payment</title><link rel="stylesheet" href="assets/styles.css"></head><body><main class="page container" style="min-height:100vh;display:grid;place-items:center"><div class="panel" style="max-width:520px;width:100%;text-align:center"><a class="logo" href="index.html"><span class="logo-mark"></span>Alisell</a><h1>Confirming Payment</h1><p class="muted" id="status">Please wait while we confirm your payment with Paystack…</p></div></main>
+<script type="module" src="assets/firebase-config.js"></script><script type="module" src="assets/firebase-data.js"></script><script type="module" src="assets/firebase-functions.js"></script>
+<script>
+function waitFF(timeout=8000){return new Promise((resolve,reject)=>{if(window.firebaseFunctions)return resolve(window.firebaseFunctions);const t=setTimeout(()=>window.firebaseFunctions?resolve(window.firebaseFunctions):reject(new Error("Payments are still connecting")),timeout);window.addEventListener("firebase-functions-ready",()=>{clearTimeout(t);resolve(window.firebaseFunctions)},{once:true})})}
+(async()=>{
+ const p=new URLSearchParams(location.search);
+ const reference=p.get("reference")||p.get("trxref");
+ const statusEl=document.querySelector("#status");
+ try{
+  if(!reference)throw new Error("Missing payment reference");
+  const fns=await waitFF();
+  const r=await fns.verifyPayment(reference);
+  statusEl.textContent=r.paid?"Payment confirmed! Redirecting…":"We couldn't confirm this payment yet.";
+ }catch(e){statusEl.textContent=(e&&e.message)||"Could not verify payment"}
+ const paid=statusEl.textContent.startsWith("Payment confirmed");
+ if(paid){setTimeout(()=>{location.href="index.html?page=confirmation&reference="+encodeURIComponent(reference||"")},1200)}
+ else{statusEl.insertAdjacentHTML("afterend",'<p><a class="btn" href="index.html?page=orders">View my orders</a></p>')}
+})();
+</script>
+</body></html>
