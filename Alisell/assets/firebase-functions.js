@@ -28,6 +28,8 @@ function waitForApp(timeout = 5000) {
   const submitVerificationFn = httpsCallable(functionsInstance, "submitVerification");
   const getAdminOverviewFn = httpsCallable(functionsInstance, "getAdminOverview");
   const getVerificationDocumentUrlFn = httpsCallable(functionsInstance, "getVerificationDocumentUrl");
+  const createReservationFn = httpsCallable(functionsInstance, "createReservation");
+  const updateReservationStatusFn = httpsCallable(functionsInstance, "updateReservationStatus");
 
   window.firebaseFunctions = {
     async becomeRole(role) {
@@ -85,6 +87,14 @@ function waitForApp(timeout = 5000) {
     },
     async getVerificationDocumentUrl(uid, kind) {
       const res = await getVerificationDocumentUrlFn({ uid, kind });
+      return res.data;
+    },
+    async createReservation(payload) {
+      const res = await createReservationFn(payload);
+      return res.data;
+    },
+    async updateReservationStatus(reservationId, status) {
+      const res = await updateReservationStatusFn({ reservationId, status });
       return res.data;
     }
   };
