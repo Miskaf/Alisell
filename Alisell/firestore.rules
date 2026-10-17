@@ -15,18 +15,27 @@ service cloud.firestore {
     }
     match /products/{id} {
       allow read: if true;
-      allow create: if hasRole('seller') && verified() && request.resource.data.sellerUid == request.auth.uid;
+      allow create: if hasRole('seller') && request.resource.data.sellerUid == request.auth.uid;
       allow update, delete: if signedIn() && (resource.data.sellerUid == request.auth.uid || isAdmin());
     }
     match /hotels/{id} {
       allow read: if true;
-      allow create: if hasRole('host') && verified() && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if hasRole('host') && request.resource.data.ownerUid == request.auth.uid;
       allow update, delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
     }
     match /properties/{id} {
       allow read: if true;
-      allow create: if verified() && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if hasRole('landlord') && request.resource.data.ownerUid == request.auth.uid;
       allow update, delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+    match /restaurants/{id} {
+      allow read: if true;
+      allow create: if hasRole('restaurant') && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+    match /reservations/{id} {
+      allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || resource.data.restaurantOwnerUid == request.auth.uid || isAdmin());
+      allow write: if false;
     }
     match /propertyLeads/{id} {
       allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid;
