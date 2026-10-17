@@ -75,14 +75,25 @@ exports.markOrderDelivered = onCall(plain, async (r) => {
 
 /* ---------- bookings ---------- */
 exports.createBooking = onCall(plain, async (r) => {
-  const uid = uidOf(r), { hotelId, checkIn, checkOut, guests } = r.data;
+  const uid = uidOf(r), { hotelId, roomType, checkIn, checkOut, guests } = r.data;
   const hs = await db.doc("hotels/" + str(hotelId, 100)).get();
   if (!hs.exists) fail("not-found", "Hotel not found");
   const a = new Date(checkIn), b = new Date(checkOut), nights = Math.round((b - a) / 864e5);
   if (isNaN(a) || isNaN(b) || nights < 1 || nights > 90) fail("invalid-argument", "Check your dates");
-  const h = hs.data(), total = Number(h.price) * nights;
+  if (a < new Date(new Date().toISOString().slice(0, 10))) fail("invalid-argument", "Check-in cannot be in the past");
+  const h = hs.data(), rooms = Array.isArray(h.rooms) && h.rooms.length ? h.rooms : [{ name: "Standard", price: h.price, count: 99 }];
+  const room = rooms.find((x) => x.name === roomType) || (rooms.length === 1 ? rooms[0] : null);
+  if (!room) fail("invalid-argument", "Choose a room type");
+  // Count rooms of this type already taken for overlapping dates (paid, or unpaid but held for 30 minutes).
+  const existing = await db.collection("bookings").where("hotelId", "==", hs.id).get();
+  const taken = existing.docs.filter((d) => {
+    const x = d.data(), t = x.created_at && x.created_at.toMillis ? x.created_at.toMillis() : Date.now();
+    return x.roomType === room.name && x.status !== "cancelled" && (x.payment_status === "paid" || Date.now() - t < 30 * 60 * 1000) && a < new Date(x.checkOut) && b > new Date(x.checkIn);
+  }).length;
+  if (taken >= room.count) fail("resource-exhausted", "No " + room.name + " rooms are free for those dates. Try other dates or another room type.");
+  const total = Number(room.price) * nights;
   const ref = await db.collection("bookings").add({
-    customerUid: uid, hotelId: hs.id, hotelName: h.name, hotelOwnerUid: h.ownerUid, checkIn: str(checkIn, 10), checkOut: str(checkOut, 10),
+    customerUid: uid, hotelId: hs.id, hotelName: h.name, hotelOwnerUid: h.ownerUid, roomType: room.name, checkIn: str(checkIn, 10), checkOut: str(checkOut, 10),
     guests: Math.max(1, parseInt(guests, 10) || 1), nights, total, status: "pending", payment_status: "pending", created_at: FV.serverTimestamp()
   });
   return { bookingId: ref.id, total };
@@ -92,8 +103,13 @@ exports.updateBookingStatus = onCall(plain, async (r) => {
   if (!["confirmed", "cancelled"].includes(status)) fail("invalid-argument", "Invalid status");
   const ref = db.doc("bookings/" + str(bookingId, 100)), s = await ref.get();
   if (!s.exists) fail("not-found", "Booking not found");
-  const p = await prof(uid);
-  if (s.data().hotelOwnerUid !== uid && !hasRole(p, "admin")) fail("permission-denied", "Not your booking");
+  const bk = s.data(), isOwner = bk.hotelOwnerUid === uid || hasRole(await prof(uid), "admin");
+  if (isOwner) {
+    if (status === "confirmed" && bk.payment_status !== "paid") fail("failed-precondition", "The guest has not paid yet");
+  } else if (bk.customerUid === uid) {
+    // Guests may cancel their own booking only before paying (refunds are handled by you, outside the app).
+    if (status !== "cancelled" || bk.payment_status === "paid") fail("permission-denied", "Contact the hotel to change a paid booking");
+  } else fail("permission-denied", "Not your booking");
   await ref.update({ status, updated_at: FV.serverTimestamp() });
   return { ok: true };
 });
