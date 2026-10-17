@@ -179,7 +179,7 @@
 
     confirmation: function () {
       render('<div class="panel" style="text-align:center;max-width:520px;margin:auto"><h1>Thank you!</h1><p>Your payment was confirmed.</p><p class="muted">Reference: ' +
-        esc(qs.get("reference") || "") + '</p><a class="btn" href="index.html?page=orders">View my orders</a></div>');
+        esc(qs.get("reference") || "") + '</p><a class="btn" href="index.html?page=orders">View my orders</a> <a class="btn alt" href="index.html?page=mybookings">My hotel bookings</a></div>');
     },
 
     orders: async function () {
@@ -312,27 +312,57 @@
   var rows = function (list, fn, empty) { return list.length ? list.map(fn).join("") : '<p class="muted">' + empty + "</p>"; };
 
   /* ---------------- Hotels ---------------- */
+  var parseRooms = function (t) {
+    return String(t || "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean).slice(0, 20).map(function (l) {
+      var m = l.match(/^(.*?)\s*[-:]\s*(\d[\d,]*)(?:\s*[-:]\s*(\d+))?\s*$/);
+      return m ? { name: m[1], price: Number(m[2].replace(/,/g, "")), count: Math.max(1, +m[3] || 1) } : null;
+    }).filter(Boolean);
+  };
+  var roomsOf = function (h) { return h.rooms && h.rooms.length ? h.rooms : [{ name: "Standard", price: Number(h.price) || 0, count: 99 }]; };
+  async function photos(f) {
+    var fl = f.elements.photos && f.elements.photos.files, out = [];
+    if (!fl || !fl.length) return out;
+    await A.wait("firebaseStorageFns", "firebase-storage-ready");
+    for (var k = 0; k < Math.min(4, fl.length); k++) out.push(await window.firebaseStorageFns.uploadListingImage(fl[k]));
+    return out;
+  }
+  var payRedirect = async function (id) {
+    var pay = await (await A.fns()).initializePayment("booking", id);
+    location.href = pay.authorization_url || pay.url || pay.authorizationUrl;
+  };
+
   P.hotels = pg(async function () {
     R('<h1>Hotels</h1><p class="muted">Loading&hellip;</p>');
-    var l = await (await A.data()).getHotels();
-    R('<h1>Hotels</h1><p><a class="btn alt" href="index.html?page=host">List your hotel</a> <a class="btn alt" href="index.html?page=mybookings">My bookings</a></p>' +
-      (l.length ? '<div class="product-grid">' + l.map(function (h) { return tile("index.html?page=hotel&id=" + h.id, h, h.name, h.city, money(h.price) + " / night"); }).join("") + "</div>" : '<p class="muted">No hotels yet.</p>'));
+    var l = await (await A.data()).getHotels(), city = (qs.get("city") || "").toLowerCase(), max = Number(qs.get("max")) || 0;
+    l = l.filter(function (h) { return (!city || String(h.city || "").toLowerCase().indexOf(city) > -1) && (!max || Number(h.price) <= max); });
+    R('<h1>Hotels</h1><form class="toolbar" method="get" action="index.html"><input type="hidden" name="page" value="hotels"><input name="city" placeholder="City" value="' + esc(qs.get("city") || "") + '"><input name="max" type="number" min="1" placeholder="Max price per night" value="' + esc(qs.get("max") || "") + '"><button class="btn">Filter</button></form>' +
+      '<p><a class="btn alt" href="index.html?page=host">List your hotel</a> <a class="btn alt" href="index.html?page=mybookings">My bookings</a></p>' +
+      (l.length ? '<div class="product-grid">' + l.map(function (h) { return tile("index.html?page=hotel&id=" + h.id, h, h.name, h.city, "from " + money(h.price) + " / night"); }).join("") + "</div>" : '<p class="muted">No hotels match.</p>'));
   });
 
   P.hotel = pg(async function () {
-    var h = await (await A.data()).getHotel(qs.get("id")), i = h.image || (h.images && h.images[0]) || "";
-    R('<div class="detail">' + (i ? '<img class="detail-img" alt="" src="' + esc(i) + '">' : '<div class="detail-img" style="background:#f4f5f6"></div>') +
-      "<div><h1>" + esc(h.name) + '</h1><p class="muted">' + esc(h.city || "") + '</p><div class="price">' + money(h.price) + " / night</div><p>" + esc(h.description || "") + "</p>" +
-      '<form id="f">' + MSG + fld("checkIn", "Check-in", "date", "required") + fld("checkOut", "Check-out", "date", "required") + fld("guests", "Guests", "number", "min=1 value=1 required") + '<button class="btn">Book and pay</button></form></div></div>');
-    $("#f").onsubmit = async function (e) {
-      e.preventDefault(); var f = e.target; note("");
+    var h = await (await A.data()).getHotel(qs.get("id")), rooms = roomsOf(h), imgs = h.images && h.images.length ? h.images : (h.image ? [h.image] : []), today = new Date().toISOString().slice(0, 10);
+    R('<div class="detail"><div>' + (imgs[0] ? '<img class="detail-img" id="big" alt="" src="' + esc(imgs[0]) + '">' : '<div class="detail-img" style="background:#f4f5f6"></div>') +
+      (imgs.length > 1 ? '<p>' + imgs.map(function (s) { return '<img data-pic="' + esc(s) + '" alt="" src="' + esc(s) + '" style="width:64px;height:64px;object-fit:cover;border-radius:8px;margin:4px;cursor:pointer">'; }).join("") + "</p>" : "") + "</div>" +
+      "<div><h1>" + esc(h.name) + '</h1><p class="muted">' + esc(h.city || "") + (h.address ? " &middot; " + esc(h.address) : "") + "</p>" +
+      (h.amenities && h.amenities.length ? "<p>" + h.amenities.map(function (x) { return '<span class="badge">' + esc(x) + "</span> "; }).join("") + "</p>" : "") + "<p>" + esc(h.description || "") + "</p>" +
+      '<form id="f">' + MSG + sel("roomType", "Room type", rooms.map(function (r) { return [esc(r.name), esc(r.name) + " - " + money(r.price) + " / night"]; })) +
+      fld("checkIn", "Check-in", "date", 'required min="' + today + '"') + fld("checkOut", "Check-out", "date", 'required min="' + today + '"') + fld("guests", "Guests", "number", "min=1 value=1 required") +
+      '<p><b id="tot"></b></p><button class="btn">Book and pay</button></form></div></div>');
+    var f = $("#f");
+    function upd() {
+      var n = Math.round((new Date(f.elements.checkOut.value) - new Date(f.elements.checkIn.value)) / 864e5), r = rooms[f.elements.roomType.selectedIndex] || rooms[0];
+      $("#tot").textContent = n > 0 ? n + " night" + (n > 1 ? "s" : "") + " = " + money(n * r.price) : "";
+    }
+    ["roomType", "checkIn", "checkOut"].forEach(function (k) { f.elements[k].onchange = upd; });
+    document.getElementById("app").onclick = function (e) { var s = e.target.dataset && e.target.dataset.pic; if (s) $("#big").src = s; };
+    f.onsubmit = async function (e) {
+      e.preventDefault(); note("");
+      if (!(new Date(f.elements.checkOut.value) > new Date(f.elements.checkIn.value))) return note("Check-out must be after check-in.");
       try {
         var u = await A.authReady(); if (A.needLogin(u)) return;
-        var F = await A.fns();
-        // ASSUMPTION: match these payload fields to your createBooking function.
-        var b = await F.createBooking({ hotelId: h.id, checkIn: f.elements.checkIn.value, checkOut: f.elements.checkOut.value, guests: +f.elements.guests.value });
-        var pay = await F.initializePayment("booking", b.bookingId || b.id);
-        location.href = pay.authorization_url || pay.url || pay.authorizationUrl;
+        var b = await (await A.fns()).createBooking({ hotelId: h.id, roomType: f.elements.roomType.value, checkIn: f.elements.checkIn.value, checkOut: f.elements.checkOut.value, guests: +f.elements.guests.value });
+        await payRedirect(b.bookingId || b.id);
       } catch (x) { note(A.errText(x)); }
     };
   });
@@ -340,23 +370,40 @@
   P.mybookings = pg(async function () {
     var l = await (await A.data()).getBookingsForCustomer();
     R("<h1>My bookings</h1>" + rows(l, function (b) {
-      return '<div class="panel" style="margin-bottom:10px"><b>' + esc(b.hotelName || b.hotelId) + "</b><br>" + esc(b.checkIn) + " to " + esc(b.checkOut) + ' <span class="badge">' + esc(b.status || "pending") + "</span></div>";
-    }, "No bookings yet."));
+      var unpaid = b.payment_status !== "paid" && b.status !== "cancelled";
+      return '<div class="panel" style="margin-bottom:10px"><b>' + esc(b.hotelName || b.hotelId) + "</b> &middot; " + esc(b.roomType || "") + "<br>" + esc(b.checkIn) + " to " + esc(b.checkOut) + " &middot; " + money(b.total) +
+        ' <span class="badge">' + esc(b.status || "pending") + '</span> <span class="badge">' + (b.payment_status === "paid" ? "paid" : "unpaid") + "</span><br>" +
+        (unpaid ? '<button class="btn" data-pay="' + b.id + '">Pay now</button> <button data-cancel="' + b.id + '">Cancel</button> ' : "") +
+        (b.status === "confirmed" ? '<a class="btn alt" href="index.html?page=review&target=' + encodeURIComponent(b.hotelOwnerUid) + "&booking=" + b.id + '">Leave a review</a>' : "") + "</div>";
+    }, "No bookings yet.") + MSG);
+    click({
+      pay: async function (id) { await payRedirect(id); },
+      cancel: async function (id) { await (await A.fns()).updateBookingStatus(id, "cancelled"); reload(); }
+    });
   }, true);
 
   P.host = pg(async function (u) {
     if (!(await gate(u, "host"))) return;
     var d = await A.data(), hs = await d.getHotelsForOwner(u.uid), bk = await d.getBookingsForHotelOwner(u.uid);
-    R("<h1>Hotel host</h1>" + MSG +
-      '<form class="panel" id="f"><h3>Add a hotel</h3>' + fld("name", "Name", "text", "required") + fld("city", "City", "text", "required") + fld("price", "Price per night (\u20A6)", "number", "min=1 required") + fld("description", "Description", "textarea") + fld("photo", "Photo", "file", 'accept="image/*"') + '<button class="btn">Add hotel</button></form>' +
-      '<div class="panel" style="margin-top:15px"><h3>My hotels</h3>' + rows(hs, function (h) { return '<div class="summary-row"><span>' + esc(h.name) + '</span><button data-delh="' + h.id + '">Delete</button></div>'; }, "None yet.") + "</div>" +
+    R("<h1>Hotel owner</h1>" + MSG +
+      '<form class="panel" id="f"><h3>Add a hotel</h3>' + fld("name", "Hotel name", "text", "required") + fld("city", "City", "text", "required") + fld("address", "Street address", "text") + fld("amenities", "Amenities (comma separated, e.g. WiFi, Parking, Pool)", "text") +
+      '<div class="field"><label>Room types (one per line: name - price per night - how many rooms). Example: Standard - 20000 - 5</label><textarea name="rooms" rows="4" required></textarea></div>' +
+      fld("description", "Description", "textarea") + fld("photos", "Photos (up to 4)", "file", 'accept="image/*" multiple') + '<button class="btn">Add hotel</button></form>' +
+      '<div class="panel" style="margin-top:15px"><h3>My hotels</h3>' + rows(hs, function (h) { return '<div class="summary-row"><span>' + esc(h.name) + " &middot; from " + money(h.price) + '</span><button data-delh="' + h.id + '">Delete</button></div>'; }, "None yet.") + "</div>" +
       '<div class="panel" style="margin-top:15px"><h3>Bookings</h3>' + rows(bk, function (b) {
-        return '<div class="summary-row"><span>' + esc(b.hotelName || b.hotelId) + " &middot; " + esc(b.checkIn) + " to " + esc(b.checkOut) + " &middot; " + esc(b.status || "pending") +
-          '</span><span><button data-bk="confirmed" data-id="' + b.id + '">Confirm</button> <button data-bk="cancelled" data-id="' + b.id + '">Cancel</button></span></div>';
+        var paid = b.payment_status === "paid";
+        return '<div class="summary-row"><span>' + esc(b.hotelName || b.hotelId) + " &middot; " + esc(b.roomType || "") + " &middot; " + esc(b.checkIn) + " to " + esc(b.checkOut) + " &middot; " + esc(b.guests) + " guests &middot; " + money(b.total) + " &middot; " + esc(b.status || "pending") + " &middot; " + (paid ? "paid" : "unpaid") +
+          "</span><span>" + (paid && b.status !== "confirmed" && b.status !== "cancelled" ? '<button data-bk="confirmed" data-id="' + b.id + '">Confirm</button> ' : "") + (b.status !== "cancelled" ? '<button data-bk="cancelled" data-id="' + b.id + '">Cancel</button>' : "") + "</span></div>";
       }, "No bookings.") + "</div>");
     $("#f").onsubmit = async function (e) {
-      e.preventDefault(); var f = e.target; note("Saving\u2026");
-      try { await d.createHotel({ name: f.elements.name.value, city: f.elements.city.value, price: +f.elements.price.value, description: f.elements.description.value, image: await photo(f) }); reload(); } catch (x) { note(A.errText(x)); }
+      e.preventDefault(); var f = e.target, rooms = parseRooms(f.elements.rooms.value); note("Saving\u2026");
+      if (!rooms.length) return note("Add at least one room type, like: Standard - 20000 - 5");
+      try {
+        var imgs = await photos(f);
+        await d.createHotel({ name: f.elements.name.value, city: f.elements.city.value, address: f.elements.address.value, amenities: f.elements.amenities.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 20),
+          rooms: rooms, price: Math.min.apply(null, rooms.map(function (r) { return r.price; })), description: f.elements.description.value, images: imgs, image: imgs[0] || "" });
+        reload();
+      } catch (x) { note(A.errText(x)); }
     };
     click({
       delh: async function (id) { await d.deleteHotel(id); reload(); },
