@@ -290,6 +290,54 @@ async function getPendingVerifications() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+/* ---------------- Restaurants & reservations ---------------- */
+
+async function createRestaurant(r) {
+  const db = await waitForDb();
+  const user = currentUser();
+  if (!user) throw new Error("Please sign in first");
+  const payload = { ...r, ownerUid: user.uid, ownerName: user.displayName || user.email || "Owner", created_at: serverTimestamp() };
+  const ref = await addDoc(collection(db, "restaurants"), payload);
+  return { id: ref.id, ...payload, created_at: new Date() };
+}
+async function getRestaurants() {
+  const db = await waitForDb();
+  const snap = await getDocs(collection(db, "restaurants"));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+async function getRestaurant(id) {
+  const db = await waitForDb();
+  const snap = await getDoc(doc(db, "restaurants", id));
+  if (!snap.exists()) throw new Error("Restaurant not found");
+  return { id: snap.id, ...snap.data() };
+}
+async function deleteRestaurant(id) {
+  const db = await waitForDb();
+  await deleteDoc(doc(db, "restaurants", id));
+  return true;
+}
+async function getRestaurantsForOwner(uid) {
+  const db = await waitForDb();
+  const snap = await getDocs(query(collection(db, "restaurants"), where("ownerUid", "==", uid)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+async function getReservationsForCustomer() {
+  const db = await waitForDb();
+  const user = currentUser();
+  if (!user) return [];
+  const snap = await getDocs(query(collection(db, "reservations"), where("customerUid", "==", user.uid)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data(), created_at: toDate(d.data().created_at) }));
+  rows.sort((a, b) => b.created_at - a.created_at);
+  return rows;
+}
+async function getReservationsForOwner(uid) {
+  const db = await waitForDb();
+  const snap = await getDocs(query(collection(db, "reservations"), where("restaurantOwnerUid", "==", uid)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data(), created_at: toDate(d.data().created_at) }));
+  rows.sort((a, b) => b.created_at - a.created_at);
+  return rows;
+}
+
 window.firebaseData = {
   getProducts, getProduct, createProduct, updateProduct, deleteProduct, getProductsForSeller,
   getOrders, getUnassignedOrders, getOrdersForAgent, getOrdersForLogistics,
@@ -298,6 +346,7 @@ window.firebaseData = {
   getBookingsForCustomer, getBookingsForHotelOwner,
   createProperty, updateProperty, deleteProperty, getProperties, getProperty, getPropertiesForOwner, createPropertyLead, getLeadsForOwner,
   getReviewsForTarget, getRatingSummary,
-  getVerificationRequest, getPendingVerifications
+  getVerificationRequest, getPendingVerifications,
+  createRestaurant, getRestaurants, getRestaurant, deleteRestaurant, getRestaurantsForOwner, getReservationsForCustomer, getReservationsForOwner
 };
 window.dispatchEvent(new CustomEvent("firebase-data-ready"));
