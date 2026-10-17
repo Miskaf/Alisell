@@ -200,16 +200,12 @@
     sell: async function () {
       var u = await authReady(); if (needLogin(u)) return;
       render('<h1>Sell on Alisell</h1><div id="msg" class="notice" style="display:none"></div>' +
-        '<div class="panel" style="margin-bottom:15px"><p>Sellers must be verified before listing. Request the seller role first.</p><button class="btn alt" id="role">Become a seller</button></div>' +
         '<form class="panel" id="f"><h3>Add a product</h3>' +
         '<div class="field"><label>Name</label><input name="name" required></div>' +
         '<div class="field"><label>Price (\u20A6)</label><input name="price" type="number" min="1" required></div>' +
         '<div class="field"><label>Category</label><select name="category"><option>fashion</option><option>electronics</option><option>home</option><option>beauty</option><option>groceries</option></select></div>' +
         '<div class="field"><label>Description</label><textarea name="description" rows="3"></textarea></div>' +
         '<div class="field"><label>Photo</label><input name="photo" type="file" accept="image/*"></div><button class="btn">Publish product</button></form>');
-      $("#role").onclick = async function () {
-        try { await (await fns()).becomeRole("seller"); note("Seller request sent."); } catch (e) { note(errText(e)); }
-      };
       $("#f").onsubmit = async function (e) {
         e.preventDefault(); var f = e.target; note("Publishing\u2026");
         try {
@@ -300,12 +296,19 @@
     return window.firebaseStorageFns.uploadListingImage(x);
   }
   var MSG = '<div id="msg" class="notice" style="display:none"></div>';
-  var roleBtn = function (role, label) {
-    setTimeout(function () {
-      var b = $("#role"); if (b) b.onclick = async function () { try { await (await A.fns()).becomeRole(role); note("Request sent. Reload to see your new access."); } catch (e) { note(A.errText(e)); } };
-    });
-    return '<div class="panel" style="margin-bottom:15px"><button class="btn alt" id="role">' + label + "</button></div>";
-  };
+  var ROLE_NAME = { seller: "seller", host: "hotel owner", restaurant: "restaurant owner", landlord: "property lister", agent: "delivery agent" };
+  // Only verified owners get past this. Customers never see it because they never open these pages.
+  async function gate(u, role) {
+    var d = await A.data(), p = (await d.getUserProfile(u.uid)) || {}, v = await d.getVerificationRequest(u.uid);
+    if ((p.roles || []).indexOf(role) > -1) return true;
+    var mine = v && v.role === role, pend = mine && v.status === "pending", rej = mine && v.status === "rejected";
+    R("<h1>Verification needed</h1>" + '<div class="panel"><p>This area is for verified ' + ROLE_NAME[role] + "s. " +
+      (pend ? "Your verification is being reviewed. Please check back soon." : rej ? "Your last request was rejected" + (v.note ? ": " + esc(v.note) : "") + ". You can submit it again." : "Verify your identity once and you can list and manage here.") + "</p>" +
+      (pend ? "" : '<a class="btn" href="index.html?page=verify&role=' + role + '">Verify as ' + ROLE_NAME[role] + "</a> ") + '<a class="btn alt" href="index.html">Back to browsing</a></div>');
+    return false;
+  }
+  var origSell = P.sell;
+  P.sell = pg(async function (u) { if (!(await gate(u, "seller"))) return; await origSell(); }, true);
   var rows = function (list, fn, empty) { return list.length ? list.map(fn).join("") : '<p class="muted">' + empty + "</p>"; };
 
   /* ---------------- Hotels ---------------- */
@@ -342,8 +345,9 @@
   }, true);
 
   P.host = pg(async function (u) {
+    if (!(await gate(u, "host"))) return;
     var d = await A.data(), hs = await d.getHotelsForOwner(u.uid), bk = await d.getBookingsForHotelOwner(u.uid);
-    R("<h1>Hotel host</h1>" + MSG + roleBtn("host", "Become a host") +
+    R("<h1>Hotel host</h1>" + MSG +
       '<form class="panel" id="f"><h3>Add a hotel</h3>' + fld("name", "Name", "text", "required") + fld("city", "City", "text", "required") + fld("price", "Price per night (\u20A6)", "number", "min=1 required") + fld("description", "Description", "textarea") + fld("photo", "Photo", "file", 'accept="image/*"') + '<button class="btn">Add hotel</button></form>' +
       '<div class="panel" style="margin-top:15px"><h3>My hotels</h3>' + rows(hs, function (h) { return '<div class="summary-row"><span>' + esc(h.name) + '</span><button data-delh="' + h.id + '">Delete</button></div>'; }, "None yet.") + "</div>" +
       '<div class="panel" style="margin-top:15px"><h3>Bookings</h3>' + rows(bk, function (b) {
@@ -389,6 +393,7 @@
   });
 
   P.listings = pg(async function (u) {
+    if (!(await gate(u, "landlord"))) return;
     var d = await A.data(), ps = await d.getPropertiesForOwner(u.uid), ls = await d.getLeadsForOwner(u.uid);
     R("<h1>My property listings</h1>" + MSG +
       '<form class="panel" id="f"><h3>Add a property</h3>' + fld("title", "Title", "text", "required") + sel("type", "Type", TYPES) + fld("city", "City", "text", "required") + fld("price", "Price (\u20A6)", "number", "min=1 required") + fld("description", "Description", "textarea") + fld("photo", "Photo", "file", 'accept="image/*"') + '<button class="btn">Publish</button></form>' +
@@ -401,13 +406,69 @@
     click({ delp: async function (id) { await d.deleteProperty(id); reload(); } });
   }, true);
 
+  /* ---------------- Restaurants ---------------- */
+  var menuText = function (m) { return (m || []).map(function (x) { return x.name + " - " + x.price; }).join("\n"); };
+  var parseMenu = function (t) {
+    return String(t || "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean).slice(0, 60).map(function (l) {
+      var m = l.match(/^(.*?)[\s\-:]+(\d[\d,]*)\s*$/); return m ? { name: m[1], price: Number(m[2].replace(/,/g, "")) } : { name: l, price: 0 };
+    });
+  };
+  P.restaurants = pg(async function () {
+    R('<h1>Restaurants</h1><p class="muted">Loading&hellip;</p>');
+    var l = await (await A.data()).getRestaurants();
+    R('<h1>Restaurants</h1><p><a class="btn alt" href="index.html?page=myrestaurant">List your restaurant</a> <a class="btn alt" href="index.html?page=myreservations">My reservations</a></p>' +
+      (l.length ? '<div class="product-grid">' + l.map(function (x) { return tile("index.html?page=restaurant&id=" + x.id, x, x.name, (x.cuisine || "") + (x.city ? " \u00B7 " + x.city : ""), ""); }).join("") + "</div>" : '<p class="muted">No restaurants yet.</p>'));
+  });
+  P.restaurant = pg(async function () {
+    var r = await (await A.data()).getRestaurant(qs.get("id")), i = r.image || "";
+    R('<div class="detail">' + (i ? '<img class="detail-img" alt="" src="' + esc(i) + '">' : '<div class="detail-img" style="background:#f4f5f6"></div>') +
+      "<div><h1>" + esc(r.name) + '</h1><p class="muted">' + esc(r.cuisine || "") + " &middot; " + esc(r.city || "") + "</p><p>" + esc(r.description || "") + "</p>" +
+      "<h3>Menu</h3>" + rows(r.menu || [], function (m) { return '<div class="summary-row"><span>' + esc(m.name) + "</span><span>" + (m.price ? money(m.price) : "") + "</span></div>"; }, "Menu coming soon.") +
+      '<form id="f"><h3>Reserve a table</h3>' + MSG + fld("date", "Date", "date", "required") + fld("time", "Time", "time", "required") + fld("guests", "Guests", "number", "min=1 value=2 required") + '<button class="btn">Request table</button></form></div></div>');
+    $("#f").onsubmit = async function (e) {
+      e.preventDefault(); var f = e.target; note("");
+      try {
+        var u = await A.authReady(); if (A.needLogin(u)) return;
+        await (await A.fns()).createReservation({ restaurantId: r.id, date: f.elements.date.value, time: f.elements.time.value, guests: +f.elements.guests.value });
+        note("Table requested. The restaurant will confirm it.");
+      } catch (x) { note(A.errText(x)); }
+    };
+  });
+  P.myreservations = pg(async function () {
+    var l = await (await A.data()).getReservationsForCustomer();
+    R("<h1>My reservations</h1>" + rows(l, function (b) {
+      return '<div class="panel" style="margin-bottom:10px"><b>' + esc(b.restaurantName || b.restaurantId) + "</b><br>" + esc(b.date) + " at " + esc(b.time) + " &middot; " + esc(b.guests) + ' guests <span class="badge">' + esc(b.status || "pending") + "</span></div>";
+    }, "No reservations yet."));
+  }, true);
+  P.myrestaurant = pg(async function (u) {
+    if (!(await gate(u, "restaurant"))) return;
+    var d = await A.data(), rs = await d.getRestaurantsForOwner(u.uid), bk = await d.getReservationsForOwner(u.uid);
+    R("<h1>Restaurant owner</h1>" + MSG +
+      '<form class="panel" id="f"><h3>Add a restaurant</h3>' + fld("name", "Name", "text", "required") + fld("city", "City", "text", "required") + fld("cuisine", "Cuisine (e.g. Hausa, Continental)", "text") + fld("description", "Description", "textarea") +
+      '<div class="field"><label>Menu (one item per line, like: Jollof rice - 2500)</label><textarea name="menu" rows="5"></textarea></div>' + fld("photo", "Photo", "file", 'accept="image/*"') + '<button class="btn">Add restaurant</button></form>' +
+      '<div class="panel" style="margin-top:15px"><h3>My restaurants</h3>' + rows(rs, function (x) { return '<div class="summary-row"><span>' + esc(x.name) + '</span><button data-delr="' + x.id + '">Delete</button></div>'; }, "None yet.") + "</div>" +
+      '<div class="panel" style="margin-top:15px"><h3>Reservations</h3>' + rows(bk, function (b) {
+        return '<div class="summary-row"><span>' + esc(b.restaurantName) + " &middot; " + esc(b.customerName || "") + " &middot; " + esc(b.date) + " " + esc(b.time) + " &middot; " + esc(b.guests) + " guests &middot; " + esc(b.status || "pending") +
+          '</span><span><button data-rs="confirmed" data-id="' + b.id + '">Confirm</button> <button data-rs="cancelled" data-id="' + b.id + '">Decline</button></span></div>';
+      }, "No reservations.") + "</div>");
+    $("#f").onsubmit = async function (e) {
+      e.preventDefault(); var f = e.target; note("Saving\u2026");
+      try { await d.createRestaurant({ name: f.elements.name.value, city: f.elements.city.value, cuisine: f.elements.cuisine.value, description: f.elements.description.value, menu: parseMenu(f.elements.menu.value), image: await photo(f) }); reload(); } catch (x) { note(A.errText(x)); }
+    };
+    click({
+      delr: async function (id) { await d.deleteRestaurant(id); reload(); },
+      rs: async function (s, t) { await (await A.fns()).updateReservationStatus(t.dataset.id, s); reload(); }
+    });
+  }, true);
+
   /* ---------------- Delivery agent ---------------- */
   P.agent = pg(async function (u) {
+    if (!(await gate(u, "agent"))) return;
     var d = await A.data(), open = [], mine = [];
     try { open = await d.getUnassignedOrders(); } catch (e) {}
     mine = await d.getOrdersForAgent(u.uid);
     var line = function (o) { return "Order " + esc(o.id.slice(0, 8)) + " &middot; " + esc(o.address || o.deliveryAddress || "") + " &middot; " + money(o.total); };
-    R("<h1>Delivery agent</h1>" + MSG + roleBtn("agent", "Become a delivery agent") +
+    R("<h1>Delivery agent</h1>" + MSG +
       '<div class="panel"><h3>Available orders</h3>' + rows(open, function (o) { return '<div class="summary-row"><span>' + line(o) + '</span><button class="btn" data-claim="' + o.id + '">Claim</button></div>'; }, "No orders waiting.") + "</div>" +
       '<div class="panel" style="margin-top:15px"><h3>My deliveries</h3>' + rows(mine, function (o) {
         return '<div class="summary-row"><span>' + line(o) + ' <span class="badge">' + esc(o.status || "assigned") + "</span></span>" + (o.status === "delivered" ? "" : '<button class="btn" data-done="' + o.id + '">Mark delivered</button>') + "</div>";
@@ -420,17 +481,21 @@
 
   /* ---------------- Verification ---------------- */
   P.verify = pg(async function (u) {
-    var d = await A.data(), v = await d.getVerificationRequest(u.uid);
-    R("<h1>Verify your identity</h1>" + MSG + (v ? '<p>Status: <span class="badge">' + esc(v.status) + "</span>" + (v.note ? " &mdash; " + esc(v.note) : "") + "</p>" : "") +
-      '<form class="panel" id="f">' + fld("address", "Home address", "text", "required") + fld("addressProof", "Proof of address (photo)", "file", 'accept="image/*" required') + fld("selfie", "Selfie", "file", 'accept="image/*" required') + '<button class="btn">Submit for review</button></form>');
+    var d = await A.data(), v = await d.getVerificationRequest(u.uid), want = qs.get("role") || (v && v.role) || "host";
+    var opts = Object.keys(ROLE_NAME).map(function (k) { return [k, ROLE_NAME[k]]; });
+    R("<h1>Verify your identity</h1>" + MSG + '<p class="muted">Customers do not need this. It is only for people who want to sell, list or deliver on Alisell.</p>' +
+      (v ? "<p>Latest request (" + esc(ROLE_NAME[v.role] || v.role || "") + '): <span class="badge">' + esc(v.status) + "</span>" + (v.note ? " &mdash; " + esc(v.note) : "") + "</p>" : "") +
+      '<form class="panel" id="f">' + sel("role", "I want to join as a", opts) + fld("businessName", "Business or trading name", "text", "required") + fld("address", "Business or home address", "text", "required") +
+      fld("addressProof", "Proof of address (photo)", "file", 'accept="image/*" required') + fld("selfie", "Selfie holding your ID", "file", 'accept="image/*" required') + '<button class="btn">Submit for review</button></form>');
+    $("#f").elements.role.value = want;
     $("#f").onsubmit = async function (e) {
       e.preventDefault(); var f = e.target; note("Uploading\u2026");
       try {
         await A.wait("firebaseStorageFns", "firebase-storage-ready");
-        var S = window.firebaseStorageFns, a = await S.uploadVerificationDoc(f.elements.addressProof.files[0], "addressProof"), s = await S.uploadVerificationDoc(f.elements.selfie.files[0], "selfie");
-        await (await A.fns()).submitVerification({ address: f.elements.address.value, addressProofPath: a.path, selfiePath: s.path });
+        var S = window.firebaseStorageFns, x = await S.uploadVerificationDoc(f.elements.addressProof.files[0], "addressProof"), y = await S.uploadVerificationDoc(f.elements.selfie.files[0], "selfie");
+        await (await A.fns()).submitVerification({ role: f.elements.role.value, businessName: f.elements.businessName.value, address: f.elements.address.value, addressProofPath: x.path, selfiePath: y.path });
         note("Submitted. We will review it shortly.");
-      } catch (x) { note(A.errText(x)); }
+      } catch (err) { note(A.errText(err)); }
     };
   }, true);
 
@@ -453,10 +518,10 @@
       return '<div class="stat"><span class="muted">' + esc(k) + '</span><div class="num">' + esc(ov[k]) + "</div></div>";
     }).join("") + "</div>" +
       '<div class="panel" style="margin-top:15px"><h3>Pending verifications</h3>' + rows(pv, function (v) {
-        return '<div class="summary-row"><span>' + esc(v.name || v.id) + ' <a href="#" data-doc="addressProof" data-u="' + v.id + '">address proof</a> <a href="#" data-doc="selfie" data-u="' + v.id + '">selfie</a></span>' +
+        return '<div class="summary-row"><span>' + esc(v.name || v.id) + ' (' + esc(ROLE_NAME[v.role] || v.role || '?') + (v.businessName ? ', ' + esc(v.businessName) : '') + ') <a href="#" data-doc="addressProof" data-u="' + v.id + '">address proof</a> <a href="#" data-doc="selfie" data-u="' + v.id + '">selfie</a></span>' +
           '<span><button class="btn" data-rv="approved" data-u="' + v.id + '">Approve</button> <button data-rv="rejected" data-u="' + v.id + '">Reject</button></span></div>';
       }, "Nothing pending.") + "</div>" +
-      '<form class="panel" id="f" style="margin-top:15px"><h3>Set a user role</h3>' + fld("uid", "User ID", "text", "required") + sel("role", "Role", [["customer", "customer"], ["seller", "seller"], ["host", "host"], ["agent", "agent"], ["admin", "admin"]]) + '<button class="btn">Update role</button></form>');
+      '<form class="panel" id="f" style="margin-top:15px"><h3>Set a user role</h3>' + fld("uid", "User ID", "text", "required") + sel("role", "Role", [["customer", "customer"], ["seller", "seller"], ["host", "hotel owner"], ["restaurant", "restaurant owner"], ["landlord", "property lister"], ["agent", "delivery agent"], ["admin", "admin"]]) + '<button class="btn">Update role</button></form>');
     $("#f").onsubmit = async function (e) {
       e.preventDefault(); var f = e.target;
       try { await F.setUserRole(f.elements.uid.value.trim(), f.elements.role.value); note("Role updated."); } catch (x) { note(A.errText(x)); }
