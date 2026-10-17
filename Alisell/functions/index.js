@@ -17,19 +17,16 @@ async function need(r, role) {
   if (!hasRole(p, role)) fail("permission-denied", "You need the " + role + " role");
   return { uid, p };
 }
+const ROLES = ["seller", "host", "restaurant", "landlord", "agent"];
 const str = (v, max = 500) => String(v == null ? "" : v).slice(0, max);
 
 /* ---------- roles ---------- */
-exports.becomeRole = onCall(plain, async (r) => {
-  const uid = uidOf(r), role = r.data.role;
-  if (!["seller", "host", "agent"].includes(role)) fail("invalid-argument", "Invalid role");
-  await db.doc("users/" + uid).set({ roles: FV.arrayUnion(role), updated_at: FV.serverTimestamp() }, { merge: true });
-  return { ok: true, role };
-});
+// Roles are only granted after an admin approves identity verification (see reviewVerification).
+exports.becomeRole = onCall(plain, async () => { fail("failed-precondition", "Roles are granted after identity verification"); });
 exports.setUserRole = onCall(plain, async (r) => {
   await need(r, "admin");
   const { uid, role } = r.data;
-  if (!uid || !["customer", "seller", "host", "agent", "admin"].includes(role)) fail("invalid-argument", "Invalid user or role");
+  if (!uid || !["customer", ...ROLES, "admin"].includes(role)) fail("invalid-argument", "Invalid user or role");
   await db.doc("users/" + uid).set({ roles: role === "customer" ? [] : [role], updated_at: FV.serverTimestamp() }, { merge: true });
   return { ok: true };
 });
@@ -101,6 +98,28 @@ exports.updateBookingStatus = onCall(plain, async (r) => {
   return { ok: true };
 });
 
+/* ---------- restaurant reservations ---------- */
+exports.createReservation = onCall(plain, async (r) => {
+  const uid = uidOf(r), { restaurantId, date, time, guests } = r.data;
+  const rs = await db.doc("restaurants/" + str(restaurantId, 100)).get();
+  if (!rs.exists) fail("not-found", "Restaurant not found");
+  if (isNaN(new Date(date + "T00:00:00")) || !/^\d{2}:\d{2}$/.test(String(time))) fail("invalid-argument", "Check the date and time");
+  const ref = await db.collection("reservations").add({
+    customerUid: uid, customerName: r.auth.token.name || r.auth.token.email || "Customer", restaurantId: rs.id, restaurantName: rs.data().name, restaurantOwnerUid: rs.data().ownerUid,
+    date: str(date, 10), time: str(time, 5), guests: Math.max(1, Math.min(50, parseInt(guests, 10) || 1)), status: "pending", created_at: FV.serverTimestamp()
+  });
+  return { reservationId: ref.id };
+});
+exports.updateReservationStatus = onCall(plain, async (r) => {
+  const uid = uidOf(r), { reservationId, status } = r.data;
+  if (!["confirmed", "cancelled"].includes(status)) fail("invalid-argument", "Invalid status");
+  const ref = db.doc("reservations/" + str(reservationId, 100)), s = await ref.get();
+  if (!s.exists) fail("not-found", "Reservation not found");
+  if (s.data().restaurantOwnerUid !== uid && !hasRole(await prof(uid), "admin")) fail("permission-denied", "Not your reservation");
+  await ref.update({ status, updated_at: FV.serverTimestamp() });
+  return { ok: true };
+});
+
 /* ---------- payments (Paystack) ---------- */
 const coll = (kind) => (kind === "booking" ? "bookings" : kind === "order" ? "orders" : fail("invalid-argument", "Unknown payment type"));
 async function paystack(path, opts) {
@@ -150,10 +169,11 @@ exports.createReview = onCall(plain, async (r) => {
 
 /* ---------- identity verification ---------- */
 exports.submitVerification = onCall(plain, async (r) => {
-  const uid = uidOf(r), { address, addressProofPath, selfiePath } = r.data, pre = "verification/" + uid + "/";
-  if (!address || !String(addressProofPath).startsWith(pre) || !String(selfiePath).startsWith(pre)) fail("invalid-argument", "Address, proof of address and a selfie are required");
+  const uid = uidOf(r), { role, businessName, address, addressProofPath, selfiePath } = r.data, pre = "verification/" + uid + "/";
+  if (!ROLES.includes(role)) fail("invalid-argument", "Choose what you want to join as");
+  if (!businessName || !address || !String(addressProofPath).startsWith(pre) || !String(selfiePath).startsWith(pre)) fail("invalid-argument", "Name, address, proof of address and a selfie are required");
   await db.doc("verificationRequests/" + uid).set({
-    uid, name: r.auth.token.name || "", email: r.auth.token.email || "", address: str(address), addressProofPath, selfiePath, status: "pending", note: "", submitted_at: FV.serverTimestamp()
+    uid, role, businessName: str(businessName, 120), name: r.auth.token.name || "", email: r.auth.token.email || "", address: str(address), addressProofPath, selfiePath, status: "pending", note: "", submitted_at: FV.serverTimestamp()
   });
   return { ok: true };
 });
@@ -161,8 +181,10 @@ exports.reviewVerification = onCall(plain, async (r) => {
   await need(r, "admin");
   const { uid, decision, note } = r.data;
   if (!uid || !["approved", "rejected"].includes(decision)) fail("invalid-argument", "Invalid decision");
-  await db.doc("verificationRequests/" + uid).set({ status: decision, note: str(note, 300), reviewed_at: FV.serverTimestamp() }, { merge: true });
-  await db.doc("users/" + uid).set({ verified: decision === "approved" }, { merge: true });
+  const ref = db.doc("verificationRequests/" + uid), s = await ref.get();
+  if (!s.exists) fail("not-found", "No verification request for that user");
+  await ref.set({ status: decision, note: str(note, 300), reviewed_at: FV.serverTimestamp() }, { merge: true });
+  if (decision === "approved") await db.doc("users/" + uid).set({ verified: true, roles: FV.arrayUnion(s.data().role) }, { merge: true });
   return { ok: true };
 });
 exports.getVerificationDocumentUrl = onCall(plain, async (r) => {
@@ -179,8 +201,8 @@ exports.getVerificationDocumentUrl = onCall(plain, async (r) => {
 exports.getAdminOverview = onCall(plain, async (r) => {
   await need(r, "admin");
   const n = async (q) => (await q.count().get()).data().count, c = (x) => db.collection(x);
-  const [users, products, orders, hotels, bookings, properties, pendingVerifications] = await Promise.all([
-    n(c("users")), n(c("products")), n(c("orders")), n(c("hotels")), n(c("bookings")), n(c("properties")), n(c("verificationRequests").where("status", "==", "pending"))
+  const [users, products, orders, hotels, bookings, properties, restaurants, pendingVerifications] = await Promise.all([
+    n(c("users")), n(c("products")), n(c("orders")), n(c("hotels")), n(c("bookings")), n(c("properties")), n(c("restaurants")), n(c("verificationRequests").where("status", "==", "pending"))
   ]);
-  return { users, products, orders, hotels, bookings, properties, pendingVerifications };
+  return { users, products, orders, hotels, bookings, properties, restaurants, pendingVerifications };
 });
